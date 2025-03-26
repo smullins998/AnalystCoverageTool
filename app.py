@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 
 st.set_page_config(page_title="Analyst Cross-Reference Tool", layout="wide")
 
@@ -9,10 +10,14 @@ try:
     # Load the Excel file
     df = pd.read_excel('coverage_analysts.xlsx')
     
-
     # Clean up data - standardize company names and column names
     df.columns = [col.strip().lower() for col in df.columns]
+    
+    # Handle NaN values in key columns
+    df['company'] = df['company'].fillna('Unknown Company')
     df['company'] = df['company'].str.strip()
+    df['status'] = df['status'].fillna('Unknown Status')
+    df['status'] = df['status'].str.strip()
     
     # Check if 'industry' column exists (after normalization)
     if 'industry' in df.columns:
@@ -30,12 +35,15 @@ try:
             industry_column = 'industry'
             st.warning("No industry column found in the data. Adding a default 'Unknown' industry.")
     
+    # Handle NaN values in industry column
+    df[industry_column] = df[industry_column].fillna('Unknown')
+    
     # Get unique companies and industries for dropdowns
     companies = sorted(df['company'].unique())
     industries = sorted(df[industry_column].unique())
     
     # Create tabs for different analysis modes
-    tab1, tab2 = st.tabs(["Compare Two Companies", "Find All Shared Analysts"])
+    tab1, tab2, tab3 = st.tabs(["Compare Two Companies", "Find All Shared Analysts", "Active Customer Analysis"])
     
     with tab1:
         st.header("Compare Two Companies")
@@ -57,21 +65,21 @@ try:
         col1, col2 = st.columns(2)
         
         with col1:
-            # First company dropdown with industry info
+            # First company dropdown with industry info and status
             company1 = st.selectbox(
                 "Select first company:",
                 filtered_companies,
                 key="company1",
-                format_func=lambda x: f"{x} ({df[df['company'] == x][industry_column].iloc[0]})"
+                format_func=lambda x: f"{x} ({df[df['company'] == x][industry_column].iloc[0]}) [{df[df['company'] == x]['status'].iloc[0]}]"
             )
         
         with col2:
-            # Second company dropdown with industry info
+            # Second company dropdown with industry info and status
             company2 = st.selectbox(
                 "Select second company:",
                 filtered_companies,
                 key="company2",
-                format_func=lambda x: f"{x} ({df[df['company'] == x][industry_column].iloc[0]})"
+                format_func=lambda x: f"{x} ({df[df['company'] == x][industry_column].iloc[0]}) [{df[df['company'] == x]['status'].iloc[0]}]"
             )
         
         # Find analysts for each company
@@ -151,7 +159,7 @@ try:
             "Select a company:",
             filtered_companies2,
             key="shared_company",
-            format_func=lambda x: f"{x} ({df[df['company'] == x][industry_column].iloc[0]})"
+            format_func=lambda x: f"{x} ({df[df['company'] == x][industry_column].iloc[0]}) [{df[df['company'] == x]['status'].iloc[0]}]"
         )
         
         # Get analysts for the selected company
@@ -169,9 +177,11 @@ try:
             
             if shared_analysts:
                 industry = df[df['company'] == company][industry_column].iloc[0]
+                status = df[df['company'] == company]['status'].iloc[0]
                 companies_with_shared_analysts.append({
                     'Company': company,
                     'Industry': industry,
+                    'Status': status,
                     'Shared Analysts': len(shared_analysts),
                     'Analyst List': ', '.join(sorted(shared_analysts))
                 })
@@ -195,8 +205,66 @@ try:
         else:
             st.warning(f"No companies found sharing analysts with {selected_company}")
     
-   
-
+    with tab3:
+        st.header("Active Customer Analysis")
+        
+        # Get list of Active Customers
+        active_customers = sorted(df[df['status'].str.lower() == 'active customer']['company'].unique())
+        
+        if not active_customers:
+            st.warning("No Active Customers found in the data.")
+        else:
+            # Select an Active Customer
+            selected_ac = st.selectbox(
+                "Select an Active Customer:",
+                active_customers,
+                key="ac_company",
+                format_func=lambda x: f"{x} ({df[df['company'] == x][industry_column].iloc[0]})"
+            )
+            
+            # Get analysts for the selected AC
+            ac_analysts = df[df['company'] == selected_ac]['analyst'].unique()
+            
+            # Find all prospects that share analysts with the selected AC
+            prospects_with_shared_analysts = []
+            
+            for company in companies:
+                if company == selected_ac or df[df['company'] == company]['status'].str.lower().iloc[0] == 'active customer':
+                    continue
+                    
+                company_analysts = df[df['company'] == company]['analyst'].unique()
+                shared_analysts = set(ac_analysts).intersection(set(company_analysts))
+                
+                if shared_analysts:
+                    industry = df[df['company'] == company][industry_column].iloc[0]
+                    status = df[df['company'] == company]['status'].iloc[0]
+                    prospects_with_shared_analysts.append({
+                        'Prospect Company': company,
+                        'Industry': industry,
+                        'Status': status,
+                        'Shared Analysts': len(shared_analysts),
+                        'Analyst List': ', '.join(sorted(shared_analysts))
+                    })
+            
+            if prospects_with_shared_analysts:
+                # Convert to DataFrame and sort by number of shared analysts
+                prospects_df = pd.DataFrame(prospects_with_shared_analysts)
+                prospects_df = prospects_df.sort_values('Shared Analysts', ascending=False)
+                
+                st.success(f"Found {len(prospects_df)} prospects sharing analysts with {selected_ac}")
+                st.dataframe(prospects_df)
+                
+                # Add a download button for the results
+                csv = prospects_df.to_csv(index=False)
+                st.download_button(
+                    label="Download prospects as CSV",
+                    data=csv,
+                    file_name=f"prospects_for_{selected_ac}.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.warning(f"No prospects found sharing analysts with {selected_ac}")
+    
 except Exception as e:
     st.error(f"Error processing file: {e}")
     # Add more detailed error information
